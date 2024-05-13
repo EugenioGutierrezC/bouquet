@@ -5,16 +5,23 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -28,6 +35,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.debugInspectorInfo
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.google.accompanist.pager.ExperimentalPagerApi
 import com.google.accompanist.pager.HorizontalPager
@@ -37,7 +45,69 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
+import kotlin.math.max
+import kotlin.math.roundToInt
 
+
+@Composable
+fun VerticalPDFReaderZoomable(
+    state: VerticalPdfReaderState,
+    modifier: Modifier
+) {
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.TopCenter
+    ) {
+        val ctx = LocalContext.current
+        val coroutineScope = rememberCoroutineScope()
+        val lazyState = state.lazyState
+        DisposableEffect(key1 = Unit) {
+            load(
+                coroutineScope,
+                ctx,
+                state,
+                constraints.maxWidth,
+                constraints.maxHeight,
+                true
+            )
+            onDispose {
+                state.close()
+            }
+        }
+        state.pdfRender?.let { pdf ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .toZoom(state),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                state = lazyState
+            ) {
+                items(pdf.pageCount) {
+                    val pageContent = pdf.pageLists[it].stateFlow.collectAsState().value
+                    DisposableEffect(key1 = Unit) {
+                        pdf.pageLists[it].load()
+                        onDispose {
+                            pdf.pageLists[it].recycle()
+                        }
+                    }
+                    when (pageContent) {
+                        is PageContentInt.PageContent -> {
+                            PdfImage(
+                                bitmap = { pageContent.bitmap.asImageBitmap() },
+                                contentDescription = pageContent.contentDescription
+                            )
+                        }
+
+                        is PageContentInt.BlankPage -> BlackPage(
+                            width = pageContent.width,
+                            height = pageContent.height
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun VerticalPDFReader(
@@ -341,7 +411,8 @@ fun Modifier.tapToZoomVertical(
             )
         }
         .pointerInput(Unit) {
-            detectTransformGestures(true) { centroid, pan, zoom, rotation ->
+            detectTransformGestures(false) { centroid, pan, zoom, rotation ->
+                state.mScale = max(state.mScale * zoom, 1f)
                 val pair = if (pan.y > 0) {
                     if (state.lazyState.canScrollBackward) {
                         Pair(0f, pan.y)
@@ -416,7 +487,8 @@ fun Modifier.tapToZoomHorizontal(
             )
         }
         .pointerInput(Unit) {
-            detectTransformGestures(true) { centroid, pan, zoom, rotation ->
+            detectTransformGestures(false) { centroid, pan, zoom, rotation ->
+                state.mScale = max(state.mScale * zoom, 1f)
                 val nOffset = if (state.scale > 1f) {
                     val maxT = (constraints.maxWidth * state.scale) - constraints.maxWidth
                     val maxY = (constraints.maxHeight * state.scale) - constraints.maxHeight
@@ -441,6 +513,33 @@ fun Modifier.tapToZoomHorizontal(
             scaleY = state.scale
             translationX = state.offset.x
             translationY = state.offset.y
+        }
+}
+
+fun Modifier.toZoom(
+    state: VerticalPdfReaderState,
+): Modifier = composed(
+    inspectorInfo = debugInspectorInfo {
+        name = "horizontalTapToZoom"
+        properties["state"] = state
+    }
+) {
+    var scale by remember { mutableStateOf(1f) }
+    var rotation by remember { mutableStateOf(0f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val transState = rememberTransformableState(onTransformation = { zoomChange, panChange, rotationChange ->
+        scale = max(scale * zoomChange, 1f)
+        rotation += 0
+        offset += panChange
+    })
+
+    this
+        .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+        .transformable(transState, lockRotationOnZoomPan = true , enabled = true)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            rotationZ = 0f
         }
 }
 
