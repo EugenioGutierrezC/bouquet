@@ -2,12 +2,18 @@ package com.rizzi.bouquet
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -379,6 +385,7 @@ private fun load(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 fun Modifier.tapToZoomVertical(
     state: VerticalPdfReaderState,
     constraints: Constraints
@@ -388,71 +395,48 @@ fun Modifier.tapToZoomVertical(
         properties["state"] = state
     }
 ) {
-    val coroutineScope = rememberCoroutineScope()
+    var scale by remember { mutableStateOf(1f) }
+    var offsetX by remember { mutableStateOf(0f) }
+    var offsetY by remember { mutableStateOf(0f) }
+
     this
-        .pointerInput(Unit) {
-            detectTapGestures(
-                onDoubleTap = { tapCenter ->
-                    if (!state.isZoomEnable) return@detectTapGestures
-                    if (state.mScale > 1.0f) {
-                        state.mScale = 1.0f
-                        state.offset = Offset(0f, 0f)
-                    } else {
-                        state.mScale = 3.0f
-                        val center = Pair(constraints.maxWidth / 2, constraints.maxHeight / 2)
-                        val xDiff = (tapCenter.x - center.first) * state.scale
-                        val yDiff = ((tapCenter.y - center.second) * state.scale).coerceIn(
-                            minimumValue = -(center.second * 2f),
-                            maximumValue = (center.second * 2f)
-                        )
-                        state.offset = Offset(-xDiff, -yDiff)
-                    }
-                }
-            )
-        }
-        .pointerInput(Unit) {
-            detectTransformGestures(false) { centroid, pan, zoom, rotation ->
-                state.mScale = max(state.mScale * zoom, 1f)
-                val pair = if (pan.y > 0) {
-                    if (state.lazyState.canScrollBackward) {
-                        Pair(0f, pan.y)
-                    } else {
-                        Pair(pan.y, 0f)
-                    }
+        .combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = { },
+            onDoubleClick = {
+                if (scale >= 2f) {
+                    scale = 1f
+                    offsetX = 0f
+                    offsetY = 0f
                 } else {
-                    if (state.lazyState.canScrollForward) {
-                        Pair(0f, pan.y)
+                    scale = 3f
+                }
+            },
+        )
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown()
+                do {
+                    val event = awaitPointerEvent()
+                    scale *= event.calculateZoom()
+                    if (scale > 1) {
+                        val offset = event.calculatePan()
+                        offsetX += offset.x
+                        offsetY += offset.y
                     } else {
-                        Pair(pan.y, 0f)
+                        scale = 1f
+                        offsetX = 0f
+                        offsetY = 0f
                     }
-                }
-                val nOffset = if (state.scale > 1f) {
-                    val maxT = (constraints.maxWidth * state.scale) - constraints.maxWidth
-                    val maxY = (constraints.maxHeight * state.scale) - constraints.maxHeight
-                    Offset(
-                        x = (state.offset.x + pan.x).coerceIn(
-                            minimumValue = (-maxT / 2) * 1.3f,
-                            maximumValue = (maxT / 2) * 1.3f
-                        ),
-                        y = (state.offset.y + pair.first).coerceIn(
-                            minimumValue = (-maxY / 2),
-                            maximumValue = (maxY / 2)
-                        )
-                    )
-                } else {
-                    Offset(0f, 0f)
-                }
-                state.offset = nOffset
-                coroutineScope.launch {
-                    state.lazyState.scrollBy((-pair.second / state.scale))
-                }
+                } while (event.changes.any { it.pressed })
             }
         }
         .graphicsLayer {
-            scaleX = state.scale
-            scaleY = state.scale
-            translationX = state.offset.x
-            translationY = state.offset.y
+            scaleX = scale
+            scaleY = scale
+            translationX = offsetX
+            translationY = offsetY
         }
 }
 
