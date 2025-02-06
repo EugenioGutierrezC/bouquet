@@ -1,17 +1,17 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("maven-publish")
     id("kotlin-parcelize")
 }
 
 android {
     namespace = "com.rizzi.bouquet"
-    compileSdk = 33
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 21
-        targetSdk = 33
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -36,17 +36,35 @@ android {
     buildFeatures {
         compose = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.4.2"
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
     }
 }
 
 dependencies {
-    implementation("androidx.compose.ui:ui:1.4.3")
-    implementation("androidx.compose.material:material:1.4.3")
+    implementation(platform("androidx.compose:compose-bom:2025.01.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material:material")
     implementation("androidx.core:core-ktx:1.10.0")
     implementation("com.google.accompanist:accompanist-pager:0.28.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.10.0")
+}
+
+publishing {
+    publications {
+        register<MavenPublication>("release") {
+            groupId = property("group").toString()
+            artifactId = "bouquet"
+            version = property("version").toString()
+
+            afterEvaluate {
+                from(components["release"])
+            }
+        }
+    }
 }
